@@ -1,0 +1,37 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: flink-deployment-run
+  namespace: openshift-pipelines
+spec:
+  pipelineRef:
+    name: flink-deployment
+  params:
+    - name: deployment-name
+      value: my-flink-job
+    - name: git-url
+      value: https://github.com/breznada/flink-pipeline
+    - name: git-revision
+      value: main
+    - name: kafka-username
+      value: pipeline
+    - name: kafka-password
+      value: JYWfuA0EKZR1qEF2UuuGqKfnUNA2H71F
+    - name: secret-name
+      value: flink-application-cluster-prod-job
+    - name: secret-namespace
+      value: flink
+  taskRunTemplate:
+    podTemplate:
+      securityContext:
+        fsGroup: 65532
+  workspaces:
+    - name: shared-workspace
+      volumeClaimTemplate:
+        metadata:
+          name: flink-deployment-pvc
+        spec:
+          accessModes: [ "ReadWriteOnce" ]
+          resources:
+            requests:
+              storage: 1Gi

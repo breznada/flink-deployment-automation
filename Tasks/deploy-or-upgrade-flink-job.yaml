@@ -1,0 +1,60 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: deploy-or-upgrade-flink-job
+  namespace: openshift-pipelines
+spec:
+  params:
+    - name: deployment-name
+      type: string
+    - name: namespace
+      type: string
+  workspaces:
+    - name: source
+      description: Git repo containing deployment.yaml in root
+  steps:
+    - name: deploy-flink-job
+      image: registry.redhat.io/openshift4/ose-cli:latest
+      securityContext:
+        runAsUser: 1000
+      script: |
+        #!/bin/bash
+        set -e
+
+        cd $(workspaces.source.path)
+        DEPLOYMENT_NAME=$(params.deployment-name)
+        NAMESPACE=$(params.namespace)
+        DEPLOYMENT_FILE=deployment.yaml
+
+        echo "Checking if FlinkDeployment '$DEPLOYMENT_NAME' exists..."
+        if ! oc get flinkdeployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" > /dev/null 2>&1; then
+          echo "Deployment does not exist. Creating it..."
+          oc apply -f "$DEPLOYMENT_FILE" -n "$NAMESPACE"
+          exit 0
+        fi
+
+        echo "Triggering savepoint and suspending the job..."
+        oc patch flinkdeployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" \
+          --type merge -p '{"spec":{"job":{"upgradeMode":"savepoint","state":"suspended"}}}'
+
+        echo "Waiting for savepoint to be created..."
+        for i in {1..30}; do
+        SAVEPOINT=$(oc get flinkstatesnapshots.flink.apache.org -n "$NAMESPACE" -o yaml | awk "/job-reference.name: ${DEPLOYMENT_NAME}/,/status:/" | grep 'path:' | awk '{print $2}' | tail -n1)
+          if [[ "$SAVEPOINT" == file:* ]]; then
+            echo "Savepoint created: $SAVEPOINT"
+            break
+          fi
+          sleep 5
+        done
+
+        if [[ -z "$SAVEPOINT" || "$SAVEPOINT" != file:* ]]; then
+          echo "Failed to retrieve savepoint after timeout."
+          exit 1
+        fi
+
+        echo "Resuming job from savepoint..."
+        oc patch flinkdeployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" --type merge -p "{\"spec\":{\"job\":{\"state\":\"running\",\"upgradeMode\":\"savepoint\",\"initialSavepointPath\":\"$SAVEPOINT\"}}}"
+
+
+        echo "Redeployment completed from savepoint."
+      

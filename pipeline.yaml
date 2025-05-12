@@ -1,0 +1,106 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: flink-deployment
+  namespace: openshift-pipelines
+spec:
+  params:
+    - name: deployment-name
+      type: string
+      description: name of the deployment
+    - name: git-url
+      type: string
+      description: Git repository URL
+    - name: git-revision
+      type: string
+      default: main
+      description: Git revision (branch or tag)
+    - name: kafka-username
+      type: string
+      description: Kafka username
+    - name: kafka-password
+      type: string
+      description: Kafka password
+    - name: secret-name
+      type: string
+      description: Name of the OpenShift secret to create
+    - name: secret-namespace
+      type: string
+      description: Name of the OpenShift namespace to create secret in
+  workspaces:
+    - name: shared-workspace
+  tasks:
+    - name: fetch-repository
+      taskRef:
+        name: git-clone
+      params:
+        - name: URL
+          value: $(params.git-url)
+        - name: REVISION
+          value: $(params.git-revision)
+        - name: SUBDIRECTORY
+          value: ""
+        - name: DELETE_EXISTING
+          value: "true"
+      workspaces:
+        - name: output
+          workspace: shared-workspace
+
+    - name: set-flink-credentials
+      runAfter:
+        - fetch-repository
+      taskRef:
+        name: set-flink-credentials
+      params:
+        - name: kafka-username
+          value: $(params.kafka-username)
+        - name: kafka-password
+          value: $(params.kafka-password)
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+
+    - name: set-flink-deployment-config
+      runAfter:
+        - fetch-repository
+      taskRef:
+        name: set-flink-deployment-config
+      params:
+        - name: deployment-name
+          value: $(params.deployment-name)
+        - name: secret-namespace
+          value: $(params.secret-namespace)
+        - name: secret-name
+          value: $(params.secret-name)
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+
+    - name: create-flink-deployment-secret
+      runAfter:
+        - set-flink-credentials
+        - set-flink-deployment-config
+      taskRef:
+        name: create-flink-deployment-secret
+      params:
+        - name: secret-name
+          value: $(params.secret-name)
+        - name: secret-namespace
+          value: $(params.secret-namespace)
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+
+    - name: deploy-or-upgrade-flink-job
+      runAfter:
+        - create-flink-deployment-secret
+      taskRef:
+        name: deploy-or-upgrade-flink-job
+      params:
+        - name: deployment-name
+          value: $(params.deployment-name)
+        - name: namespace
+          value: $(params.secret-namespace)
+      workspaces:
+        - name: source
+          workspace: shared-workspace

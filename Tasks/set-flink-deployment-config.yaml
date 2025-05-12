@@ -1,0 +1,36 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: set-flink-deployment-config
+  namespace: openshift-pipelines
+spec:
+  params:
+    - name: deployment-name
+      type: string
+    - name: secret-namespace
+      type: string
+    - name: secret-name
+      type: string
+  workspaces:
+    - name: source
+      description: Workspace with deployment.yaml.template
+  steps:
+    - name: render-flink-deployment
+      image: alpine:3.19
+      securityContext:
+        runAsUser: 1000
+      script: |
+        #!/bin/sh
+        set -e
+
+        cd $(workspaces.source.path)
+
+        echo "Rendering deployment.yaml from template..."
+
+        sed -e "s|<deployment-name>|$(params.deployment-name)|g" \
+            -e "s|<deployment-namespace>|$(params.secret-namespace)|g" \
+            -e "s|<deployment-secret-name>|$(params.secret-name)|g" \
+            flinkDeployment.yaml > deployment.yaml
+
+        echo "Generated deployment.yaml:"
+        cat deployment.yaml
